@@ -29,7 +29,7 @@ const auth = new google.auth.JWT(GOOGLE_CLIENT_EMAIL, null, GOOGLE_PRIVATE_KEY, 
 
 const sheets = google.sheets({version: 'v4', auth});
 const drive = google.drive({version: 'v3', auth});
-const speechClient = new speech.SpeechClient({ credentials: { private_key: GOOGLE_PRIVATE_KEY, client_email: GOOGLE_CLIENT_EMAIL } });
+
 
 app.post('/webhook', (req, res) => {
   res.status(200).send('OK');
@@ -160,4 +160,5 @@ async function replyLine(token, text) {
 }
 
 app.listen(process.env.PORT || 3000, () => console.log('Bot running'));
+
 
