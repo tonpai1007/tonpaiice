@@ -1,9 +1,0 @@
-{
-  "builder": "RAILPACK",
-  "build": {
-    "command": "npm install"
-  },
-  "start": {
-    "command": "node server.js"
-  }
-}
