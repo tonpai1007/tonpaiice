@@ -62,11 +62,12 @@ app.post('/webhook', (req, res) => {
 async function parseOrder(text) {
   const match = text.match(/(?:([\u0E00-\u0E7F]+)\s+)?สั่ง\s*([\u0E00-\u0E7F]+)\s*(\d+)\s*([\u0E00-\u0E7F]+)?\s*(?:ส่งโดย\s*([\u0E00-\u0E7F]+))?/i);
   if (!match) return 'ไม่เข้าใจคำสั่งค่ะ';
-  const customer = match[1] || 'ลูกค้าไม่ระบุ';
-  const item = match[2];
+  const customer = (match[1] || 'ลูกค้าไม่ระบุ').trim();
+  const item = (match[2] || '').trim();
   const qty = parseInt(match[3]);
-  const unit = match[4] || 'ชิ้น';
-  const deliver = match[5] || 'ไม่ระบุ';
+  const unit = (match[4] || 'ชิ้น').trim();
+  const deliver = (match[5] || 'ไม่ระบุ').trim();
+  console.log(`Parsed: customer=${customer}, item=${item}, qty=${qty}, unit=${unit}, deliver=${deliver}`);
   try {
     const stockData = await getStock(item, unit);
     if (stockData.stock < qty) return `สต็อก${item}ไม่พอ!`;
@@ -86,8 +87,12 @@ async function getStock(item, unit) {
     const range = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'สต็อก!A:E' });
     console.log('getStock: Sheets response received');
     const rows = range.data.values || [];
+    console.log('Rows fetched:', JSON.stringify(rows));
     for (const row of rows) {
-      if (row[0] === item && row[1] === unit) {
+      const rowItem = (row[0] || '').trim();
+      const rowUnit = (row[1] || '').trim();
+      console.log(`Checking row: item=${rowItem}, unit=${rowUnit}, full row=${row.join(',')}`);
+      if (rowItem === item && rowUnit === unit) {
         return { stock: parseInt(row[3] || 0), price: parseInt(row[4] || 0) };
       }
     }
@@ -106,7 +111,9 @@ async function updateStock(item, unit, newStock) {
     console.log('updateStock: Sheets response received');
     const rows = range.data.values || [];
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === item && rows[i][1] === unit) {
+      const rowItem = (rows[i][0] || '').trim();
+      const rowUnit = (rows[i][1] || '').trim();
+      if (rowItem === item && rowUnit === unit) {
         await sheets.spreadsheets.values.update({
           spreadsheetId: SHEET_ID,
           range: `สต็อก!D${i+1}`,
@@ -232,6 +239,7 @@ async function replyLine(token, text) {
 }
 
 app.listen(process.env.PORT || 3000, () => console.log('Bot running'));
+
 
 
 
