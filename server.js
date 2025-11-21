@@ -60,13 +60,17 @@ app.post('/webhook', (req, res) => {
 });
 
 async function parseOrder(text) {
-  const match = text.match(/(?:([\u0E00-\u0E7F]+)\s+)?สั่ง\s*([\u0E00-\u0E7F]+)\s*(\d+)\s*([\u0E00-\u0E7F]+)?\s*(?:ส่งโดย\s*([\u0E00-\u0E7F]+))?/i);
+  // Make regex more flexible for voice: optional "สั่ง", allow customer/delivery optional
+  const match = text.match(/(?:([\u0E00-\u0E7F]+)\s+)?(?:สั่ง\s*)?([\u0E00-\u0E7F]+)\s*(\d+)\s*([\u0E00-\u0E7F]+)?\s*(?:ส่งโดย\s*([\u0E00-\u0E7F]+))?/i);
   if (!match) return 'ไม่เข้าใจคำสั่งค่ะ';
-  const customer = (match[1] || 'ลูกค้าไม่ระบุ').trim();
-  const item = (match[2] || '').trim();
+  let customer = (match[1] || 'ลูกค้าไม่ระบุ').trim();
+  let item = (match[2] || '').trim();
   const qty = parseInt(match[3]);
-  const unit = (match[4] || 'ชิ้น').trim();
-  const deliver = (match[5] || 'ไม่ระบุ').trim();
+  let unit = (match[4] || 'ชิ้น').trim();
+  let deliver = (match[5] || 'ไม่ระบุ').trim();
+  // Normalize common misspellings or STT errors
+  item = item.replace(/เเข็ง/g, 'แข็ง').replace(/เเ/g, 'แ').trim();
+  unit = unit.replace(/ถุง/g, 'ถุง').trim(); // Add more normalizations if needed
   console.log(`Parsed: customer=${customer}, item=${item}, qty=${qty}, unit=${unit}, deliver=${deliver}`);
   try {
     const stockData = await getStock(item, unit);
@@ -89,8 +93,10 @@ async function getStock(item, unit) {
     const rows = range.data.values || [];
     console.log('Rows fetched:', JSON.stringify(rows));
     for (const row of rows) {
-      const rowItem = (row[0] || '').trim();
-      const rowUnit = (row[1] || '').trim();
+      let rowItem = (row[0] || '').trim();
+      let rowUnit = (row[1] || '').trim();
+      // Normalize sheet data if needed (e.g., for consistency)
+      rowItem = rowItem.replace(/เเข็ง/g, 'แข็ง').trim();
       console.log(`Checking row: item=${rowItem}, unit=${rowUnit}, full row=${row.join(',')}`);
       if (rowItem === item && rowUnit === unit) {
         return { stock: parseInt(row[3] || 0), price: parseInt(row[4] || 0) };
@@ -111,8 +117,9 @@ async function updateStock(item, unit, newStock) {
     console.log('updateStock: Sheets response received');
     const rows = range.data.values || [];
     for (let i = 0; i < rows.length; i++) {
-      const rowItem = (rows[i][0] || '').trim();
-      const rowUnit = (rows[i][1] || '').trim();
+      let rowItem = (rows[i][0] || '').trim();
+      let rowUnit = (rows[i][1] || '').trim();
+      rowItem = rowItem.replace(/เเข็ง/g, 'แข็ง').trim();
       if (rowItem === item && rowUnit === unit) {
         await sheets.spreadsheets.values.update({
           spreadsheetId: SHEET_ID,
@@ -182,10 +189,10 @@ async function processVoice(id, token) {
     const reply = await parseOrder(transcript);
     await replyLine(token, `ได้ยิน: "${transcript}"\n${reply}`);
 
-    // Save original m4a to Drive
+    // Save original m4a to Drive using stream
     const file = await drive.files.create({
       resource: { name: `voice_${Date.now()}.m4a`, parents: [VOICE_FOLDER_ID] },
-      media: { mimeType: 'audio/m4a', body: originalBlob }
+      media: { mimeType: 'audio/m4a', body: Readable.from(originalBlob) }
     }, { uploadType: 'multipart' });
     console.log('processVoice: File saved to Drive');
   } catch (e) {
@@ -205,6 +212,11 @@ async function speechToText(blob) {
         sampleRateHertz: 16000,
         languageCode: 'th-TH',
         enableAutomaticPunctuation: true,
+        speechContexts: [
+          {
+            phrases: ['น้ำแข็ง', 'เหล้าขาว', 'เบียร์', 'ถุง', 'ขวด', 'กระป๋อง', 'สั่ง', 'ส่งโดย'] // Bias for common items/units/commands
+          }
+        ]
       },
       audio: {
         content: audioBytes
@@ -238,7 +250,7 @@ async function replyLine(token, text) {
   }
 }
 
-app.listen(process.env.PORT || 3000, () => console.log('Bot running'));
+app.listen(process.env.PORT || 3000, () => console.log('Bot running'))
 
 
 
