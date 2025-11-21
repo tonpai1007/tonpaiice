@@ -7,44 +7,37 @@ app.use(express.json());
 
 const SHEET_ID = process.env.SHEET_ID;
 const LINE_TOKEN = process.env.LINE_TOKEN;
-const STT_KEY = process.env.STT_KEY;
+const STT_KEY = process.env.STT_KEY; // Unused, can remove
 const VOICE_FOLDER_ID = process.env.VOICE_FOLDER_ID;
 
-// Handle undefined GOOGLE_PRIVATE_KEY (main error from your log)
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
-const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-
-if (!GOOGLE_PRIVATE_KEY || !GOOGLE_CLIENT_EMAIL) {
-  console.error('Missing Google auth variables - Sheets/Drive/STT may fail');
+// Load full credentials from base64 env var
+let credentials;
+try {
+  const base64Credentials = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64;
+  if (!base64Credentials) {
+    throw new Error('Missing GOOGLE_APPLICATION_CREDENTIALS_BASE64');
+  }
+  credentials = JSON.parse(Buffer.from(base64Credentials, 'base64').toString('utf-8'));
+  console.log('Credentials loaded successfully');
+} catch (e) {
+  console.error('Failed to load credentials:', e.message, e.stack);
+  // Don't exit; allow bot to run with fallback errors
 }
 
-// Debug: Log key details (without exposing full key)
-console.log('GOOGLE_CLIENT_EMAIL:', GOOGLE_CLIENT_EMAIL);
-console.log('GOOGLE_PRIVATE_KEY length:', GOOGLE_PRIVATE_KEY ? GOOGLE_PRIVATE_KEY.length : 'null');
-console.log('GOOGLE_PRIVATE_KEY starts with:', GOOGLE_PRIVATE_KEY ? GOOGLE_PRIVATE_KEY.substring(0, 30) : 'null');
-console.log('GOOGLE_PRIVATE_KEY ends with:', GOOGLE_PRIVATE_KEY ? GOOGLE_PRIVATE_KEY.substring(GOOGLE_PRIVATE_KEY.length - 30) : 'null');
-
-const speechClient = new speech.SpeechClient({
-  credentials: {
-    private_key: GOOGLE_PRIVATE_KEY,
-    client_email: GOOGLE_CLIENT_EMAIL
-  }
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 });
 
-const auth = new google.auth.JWT(GOOGLE_CLIENT_EMAIL, null, GOOGLE_PRIVATE_KEY, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']);
-
-// Debug: Test auth early
-auth.getAccessToken()
-  .then(token => console.log('Auth successful, token acquired'))
-  .catch(e => {
-    console.error('Auth failure:', e.message, e.stack);
-    console.error('Fatal: Google auth failed. Bot cannot process orders.', e);
-    process.exit(1); // Stop server if auth broken
-  });
+const speechClient = new speech.SpeechClient({ credentials });
 
 const sheets = google.sheets({version: 'v4', auth});
 const drive = google.drive({version: 'v3', auth});
 
+// Debug: Test auth early
+auth.getAccessToken()
+  .then(token => console.log('Auth successful, token acquired'))
+  .catch(e => console.error('Auth failure:', e.message, e.stack));
 
 app.post('/webhook', (req, res) => {
   res.status(200).send('OK');
@@ -69,14 +62,17 @@ async function parseOrder(text) {
   const qty = parseInt(match[3]);
   const unit = match[4] || 'ชิ้น';
   const deliver = match[5] || 'ไม่ระบุ';
-  const stockData = await getStock(item, unit);
-  if (stockData.stock < qty) return `สต็อก${item}ไม่พอ!`;
-  const total = stockData.price * qty;
-  const orderNo = await addOrder(item, qty, unit, customer, deliver, total);
-  await updateStock(item, unit, stockData.stock - qty);
-  return `${customer} ค่ะ!\n${item} ${qty}${unit} = ${total}฿\nส่งโดย ${deliver}\nรหัส: ${orderNo}`;
+  try {
+    const stockData = await getStock(item, unit);
+    if (stockData.stock < qty) return `สต็อก${item}ไม่พอ!`;
+    const total = stockData.price * qty;
+    const orderNo = await addOrder(item, qty, unit, customer, deliver, total);
+    await updateStock(item, unit, stockData.stock - qty);
+    return `${customer} ค่ะ!\n${item} ${qty}${unit} = ${total}฿\nส่งโดย ${deliver}\nรหัส: ${orderNo}`;
+  } catch (e) {
+    return 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google—ลองใหม่นะคะ';
+  }
 }
-
 async function getStock(item, unit) {
   try {
     console.log(`getStock: Fetching for item=${item}, unit=${unit}`);
@@ -201,6 +197,7 @@ async function replyLine(token, text) {
 }
 
 app.listen(process.env.PORT || 3000, () => console.log('Bot running'));
+
 
 
 
