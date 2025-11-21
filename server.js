@@ -2,8 +2,13 @@ const express = require('express');
 const { google } = require('googleapis');
 const speech = require('@google-cloud/speech');
 const line = require('@line/bot-sdk');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+const { Readable } = require('stream');
 const app = express();
 app.use(express.json());
+
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const SHEET_ID = process.env.SHEET_ID;
 const LINE_TOKEN = process.env.LINE_TOKEN;
@@ -86,6 +91,7 @@ async function getStock(item, unit) {
         return { stock: parseInt(row[3] || 0), price: parseInt(row[4] || 0) };
       }
     }
+    console.log('getStock: No matching item/unit found');
     return { stock: 0, price: 0 };
   } catch (e) {
     console.error('getStock error:', e.message, e.stack);
@@ -146,16 +152,33 @@ async function processVoice(id, token) {
       throw new Error(`LINE API error: ${response.status} ${response.statusText}`);
     }
     const arrayBuffer = await response.arrayBuffer();
-    const blob = Buffer.from(arrayBuffer);
+    const originalBlob = Buffer.from(arrayBuffer); // For Drive save
     console.log('processVoice: Audio fetched');
-    const transcript = await speechToText(blob);
+
+    // Convert m4a to WAV (LINEAR16)
+    const inputStream = Readable.from(originalBlob);
+    const convertedBlob = await new Promise((resolve, reject) => {
+      const buffers = [];
+      ffmpeg(inputStream)
+        .inputFormat('m4a')
+        .audioCodec('pcm_s16le')
+        .format('wav')
+        .on('error', reject)
+        .on('end', () => resolve(Buffer.concat(buffers)))
+        .pipe()
+        .on('data', (data) => buffers.push(data));
+    });
+    console.log('processVoice: Audio converted to WAV');
+
+    const transcript = await speechToText(convertedBlob);
     console.log(`processVoice: Transcript: ${transcript}`);
     const reply = await parseOrder(transcript);
     await replyLine(token, `ได้ยิน: "${transcript}"\n${reply}`);
-    // Save to Drive
+
+    // Save original m4a to Drive
     const file = await drive.files.create({
       resource: { name: `voice_${Date.now()}.m4a`, parents: [VOICE_FOLDER_ID] },
-      media: { mimeType: 'audio/m4a', body: blob }
+      media: { mimeType: 'audio/m4a', body: originalBlob }
     }, { uploadType: 'multipart' });
     console.log('processVoice: File saved to Drive');
   } catch (e) {
@@ -171,6 +194,8 @@ async function speechToText(blob) {
 
     const request = {
       config: {
+        encoding: 'LINEAR16',
+        sampleRateHertz: 16000,
         languageCode: 'th-TH',
         enableAutomaticPunctuation: true,
       },
@@ -207,6 +232,7 @@ async function replyLine(token, text) {
 }
 
 app.listen(process.env.PORT || 3000, () => console.log('Bot running'));
+
 
 
 
